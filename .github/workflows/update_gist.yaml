@@ -1,0 +1,25 @@
+name: Update Gist
+on:
+  push:
+  # schedule:
+  #   - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  update-gist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set Up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Run Application
+        env:
+          GH_GIST_PAT: ${{ secrets.GH_GIST_PAT }}
+          RUSTYBEARS_GIST_ID: ${{ vars.RUSTYBEARS_GIST_ID }}
+        run: cargo run --release
