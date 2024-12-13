@@ -1,18 +1,26 @@
 use reqwest::Error;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
 use std::env;
 use thousands::Separable;
 
 #[derive(Deserialize, Debug)]
 struct PackageData {
-    total_downloads: u64,
+    downloads: HashMap<String, HashMap<String, u64>>,
 }
 
-async fn fetch_downloads(package_name: &str) -> Result<u64, Error> {
+async fn fetch_last_day_downloads(package_name: &str) -> Result<(u64, String), Error> {
     let url = format!("https://pepy.tech/api/v2/projects/{}", package_name);
     let response: PackageData = reqwest::get(&url).await?.json().await?;
-    Ok(response.total_downloads)
+
+    // Extract the downloads field and find the last day
+    if let Some((last_day, versions)) = response.downloads.iter().max_by_key(|entry| entry.0) {
+        let total_last_day_downloads: u64 = versions.values().sum();
+        Ok((total_last_day_downloads, last_day.clone()))
+    } else {
+        Ok((0, "No data available".to_string()))
+    }
 }
 
 async fn update_gist(content: &serde_json::Value) -> Result<(), Error> {
@@ -53,42 +61,46 @@ async fn update_gist(content: &serde_json::Value) -> Result<(), Error> {
 #[tokio::main]
 async fn main() {
     let packages = ["pandas", "polars"];
-    let mut total_downloads = 0;
-    let mut polars_downloads = 0;
-
     let mut package_data = serde_json::Map::new();
+    let mut last_day_downloads = HashMap::new();
+    let mut last_day_dates = HashMap::new();
 
     for package in &packages {
-        match fetch_downloads(package).await {
-            Ok(downloads) => {
+        match fetch_last_day_downloads(package).await {
+            Ok((downloads, last_day)) => {
+                last_day_downloads.insert(package.to_string(), downloads);
+                last_day_dates.insert(package.to_string(), last_day.clone());
                 package_data.insert(
                     package.to_string(),
                     json!(format!(
-                        "{} million total downloads",
-                        (downloads / 1_000_000).separate_with_commas()
+                        "{} downloads on {}",
+                        downloads.separate_with_commas(),
+                        last_day
                     )),
                 );
-                total_downloads += downloads;
-                if *package == "polars" {
-                    polars_downloads = downloads;
-                }
             }
             Err(e) => println!("Failed to fetch data for '{}': {}", package, e),
         }
     }
 
-    if total_downloads > 0 {
-        let polars_ratio = (polars_downloads as f64 / total_downloads as f64) * 100.0;
-        let pandas_ratio = 100.0 - polars_ratio;
+    if let (Some(&pandas_downloads), Some(&polars_downloads)) = (
+        last_day_downloads.get("pandas"),
+        last_day_downloads.get("polars"),
+    ) {
+        let total_downloads = pandas_downloads + polars_downloads;
+        if total_downloads > 0 {
+            let pandas_ratio = (pandas_downloads as f64 / total_downloads as f64) * 100.0;
+            let polars_ratio = (polars_downloads as f64 / total_downloads as f64) * 100.0;
 
-        package_data.insert(
-            "polars_ratio".to_string(),
-            json!(format!("{:.2}%", polars_ratio)),
-        );
-        package_data.insert(
-            "pandas_ratio".to_string(),
-            json!(format!("{:.2}%", pandas_ratio)),
-        );
+            package_data.insert(
+                "pandas_ratio".to_string(),
+                json!(format!("{:.2}%", pandas_ratio)),
+            );
+            package_data.insert(
+                "polars_ratio".to_string(),
+                json!(format!("{:.2}%", polars_ratio)),
+            );
+        }
     }
 
     let json_output = json!(package_data);
