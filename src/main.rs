@@ -14,7 +14,6 @@ async fn fetch_last_day_downloads(package_name: &str) -> Result<(u64, String), E
     let url = format!("https://pepy.tech/api/v2/projects/{}", package_name);
     let response: PackageData = reqwest::get(&url).await?.json().await?;
 
-    // Extract the downloads field and find the last day
     if let Some((last_day, versions)) = response.downloads.iter().max_by_key(|entry| entry.0) {
         let total_last_day_downloads: u64 = versions.values().sum();
         Ok((total_last_day_downloads, last_day.clone()))
@@ -60,7 +59,7 @@ async fn update_gist(content: &serde_json::Value) -> Result<(), Error> {
 
 #[tokio::main]
 async fn main() {
-    let packages = ["pandas", "polars"];
+    let packages = ["pandas", "polars", "uv", "poetry"];
     let mut package_data = serde_json::Map::new();
     let mut last_day_downloads = HashMap::new();
     let mut last_day_dates = HashMap::new();
@@ -99,6 +98,23 @@ async fn main() {
             package_data.insert(
                 "polars_ratio".to_string(),
                 json!(format!("{:.2}%", polars_ratio)),
+            );
+        }
+    }
+
+    if let (Some(&uv_downloads), Some(&poetry_downloads)) = (
+        last_day_downloads.get("uv"),
+        last_day_downloads.get("poetry"),
+    ) {
+        let total_downloads = uv_downloads + poetry_downloads;
+        if total_downloads > 0 {
+            let uv_ratio = (uv_downloads as f64 / total_downloads as f64) * 100.0;
+            let poetry_ratio = (poetry_downloads as f64 / total_downloads as f64) * 100.0;
+
+            package_data.insert("uv_ratio".to_string(), json!(format!("{:.2}%", uv_ratio)));
+            package_data.insert(
+                "poetry_ratio".to_string(),
+                json!(format!("{:.2}%", poetry_ratio)),
             );
         }
     }
