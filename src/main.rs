@@ -57,14 +57,15 @@ async fn update_gist(content: &serde_json::Value) -> Result<(), Error> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() {
-    let packages = ["pandas", "polars", "uv", "poetry"];
-    let mut package_data = serde_json::Map::new();
+
+async fn fetch_all_packages(
+    packages: &[&str],
+) -> (HashMap<String, u64>, HashMap<String, String>, serde_json::Map<String, serde_json::Value>) {
     let mut last_day_downloads = HashMap::new();
     let mut last_day_dates = HashMap::new();
+    let mut package_data = serde_json::Map::new();
 
-    for package in &packages {
+    for package in packages {
         match fetch_last_day_downloads(package).await {
             Ok((downloads, last_day)) => {
                 last_day_downloads.insert(package.to_string(), downloads);
@@ -82,45 +83,50 @@ async fn main() {
         }
     }
 
-    if let (Some(&pandas_downloads), Some(&polars_downloads)) = (
-        last_day_downloads.get("pandas"),
-        last_day_downloads.get("polars"),
-    ) {
-        let total_downloads = pandas_downloads + polars_downloads;
-        if total_downloads > 0 {
-            let pandas_ratio = (pandas_downloads as f64 / total_downloads as f64) * 100.0;
-            let polars_ratio = (polars_downloads as f64 / total_downloads as f64) * 100.0;
+    (last_day_downloads, last_day_dates, package_data)
+}
 
-            package_data.insert(
-                "pandas_ratio".to_string(),
-                json!(format!("{:.2}%", pandas_ratio)),
-            );
-            package_data.insert(
-                "polars_ratio".to_string(),
-                json!(format!("{:.2}%", polars_ratio)),
-            );
+
+fn compute_ratios(
+    pairs: &[(&str, &str)],
+    last_day_downloads: &HashMap<String, u64>,
+    package_data: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    for &(pkg1, pkg2) in pairs {
+        if let (Some(&downloads1), Some(&downloads2)) = (
+            last_day_downloads.get(pkg1),
+            last_day_downloads.get(pkg2),
+        ) {
+            let total = downloads1 + downloads2;
+            if total > 0 {
+                package_data.insert(
+                    format!("{}_ratio", pkg1),
+                    json!(format!("{:.2}%", (downloads1 as f64 / total as f64) * 100.0)),
+                );
+                package_data.insert(
+                    format!("{}_ratio", pkg2),
+                    json!(format!("{:.2}%", (downloads2 as f64 / total as f64) * 100.0)),
+                );
+            }
         }
     }
+}
 
-    if let (Some(&uv_downloads), Some(&poetry_downloads)) = (
-        last_day_downloads.get("uv"),
-        last_day_downloads.get("poetry"),
-    ) {
-        let total_downloads = uv_downloads + poetry_downloads;
-        if total_downloads > 0 {
-            let uv_ratio = (uv_downloads as f64 / total_downloads as f64) * 100.0;
-            let poetry_ratio = (poetry_downloads as f64 / total_downloads as f64) * 100.0;
 
-            package_data.insert("uv_ratio".to_string(), json!(format!("{:.2}%", uv_ratio)));
-            package_data.insert(
-                "poetry_ratio".to_string(),
-                json!(format!("{:.2}%", poetry_ratio)),
-            );
-        }
-    }
+#[tokio::main]
+async fn main() {
+    let packages = ["pandas", "polars", "uv", "poetry"];
+
+    let (last_day_downloads, _last_day_dates, mut package_data) =
+        fetch_all_packages(&packages).await;
+
+    compute_ratios(
+        &[("pandas", "polars"), ("uv", "poetry")],
+        &last_day_downloads,
+        &mut package_data,
+    );
 
     let json_output = json!(package_data);
-
     println!("{}", serde_json::to_string_pretty(&json_output).unwrap());
 
     if let Err(e) = update_gist(&json_output).await {
